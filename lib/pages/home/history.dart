@@ -1,5 +1,6 @@
 import 'package:dm1/pages/exit.dart';
 import 'package:dm1/pages/home/widgets/auth_guard.dart';
+import 'package:dm1/pages/home/widgets/recommend.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../auth_manager.dart';
@@ -67,13 +68,21 @@ class _HistoryPageState extends State<HistoryPage> {
 
           final lane = (record.bias ?? 0).toDouble();
 
+          final recos = RecommendHelper.buildRecommendations(
+            bias: (record.bias ?? 0),
+            headway: (record.headway ?? 0),
+            left: (record.left ?? 0),
+            right: (record.right ?? 0),
+            front: (record.front ?? 0),
+          );
+
           final stats = DrivingStats(
             tripId: record.drivingId.toString(),
             date: record.startTime,
             duration: record.endTime.difference(record.startTime),
             distance: record.mileage,
             gazePercentages: gaze,
-            recommendations: const [],
+            recommendations: recos,
             laneDeparture: lane,
           );
 
