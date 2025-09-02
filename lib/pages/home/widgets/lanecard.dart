@@ -34,7 +34,7 @@ class LaneIndicator extends StatelessWidget {
               Center(
                 child: Container(
                   height: height,
-                  width: 20,
+                  width: 10,
                   color: const Color.fromRGBO(35, 21, 157, 1),
                 ),
               ),
