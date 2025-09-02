@@ -40,7 +40,8 @@ class _DrivingPageState extends State<DrivingPage> {
         } catch (_) {}
       }
 
-      if (socketManager.isDrivingByServer && socketManager.currentDriving != null) {
+      final ls = socketManager.lastStatus;
+      if ((ls == 1 || ls == 2) && socketManager.currentDriving != null) {
         _restoreTimerFromServer(socketManager.currentDriving!.startTime);
       }
     });
@@ -69,19 +70,17 @@ class _DrivingPageState extends State<DrivingPage> {
     });
   }
 
-  /// Device.status==true
   Future<void> _startDriving(SocketManager socketManager) async {
     if (_isAnalyzing) return;
 
-    final connectedDevices = socketManager.devices.where((d) => d.status == true).toList();
-    if (connectedDevices.isEmpty) {
+    final int? deviceId = socketManager.currentDeviceId;
+    if (deviceId == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('연결된 디바이스가 없습니다.')),
+        const SnackBar(content: Text('디바이스가 없습니다.')),
       );
       return;
     }
-    final int deviceId = connectedDevices.first.deviceId; // deviceID 활용
 
     try {
       final driving = await socketManager.startDriving(deviceId);
@@ -93,9 +92,7 @@ class _DrivingPageState extends State<DrivingPage> {
     } catch (e) {
       _drivingTimer?.cancel();
       _startTime = null;
-      setState(() {
-        _drivingData['time'] = '00:00:00';
-      });
+      setState(() => _drivingData['time'] = '00:00:00');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('운전 시작 실패: $e')),
@@ -122,9 +119,9 @@ class _DrivingPageState extends State<DrivingPage> {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Column(
+              child: const Column(
                 mainAxisSize: MainAxisSize.min,
-                children: const [
+                children: [
                   CircularProgressIndicator(),
                   SizedBox(height: 16),
                   Text(
@@ -158,9 +155,7 @@ class _DrivingPageState extends State<DrivingPage> {
 
       _drivingTimer?.cancel();
       _startTime = null;
-      setState(() {
-        _drivingData['time'] = '00:00:00';
-      });
+      setState(() => _drivingData['time'] = '00:00:00');
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -173,6 +168,9 @@ class _DrivingPageState extends State<DrivingPage> {
       );
     } finally {
       _hideAnalyzingDialog();
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/home/stats');
+      }
     }
   }
 
@@ -194,17 +192,14 @@ class _DrivingPageState extends State<DrivingPage> {
     final status = context.watch<SocketManager>().status;
     final tuple = _wsStatusDisplay(status);
     return Row(
+      mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text('연결  ·  ', style: TextStyle(fontWeight: FontWeight.w500)),
         Container(
           width: 10,
           height: 10,
           margin: const EdgeInsets.only(right: 6),
-          decoration: BoxDecoration(
-            color: tuple.$2,
-            shape: BoxShape.circle,
-          ),
+          decoration: BoxDecoration(color: tuple.$2, shape: BoxShape.circle),
         ),
         Text(tuple.$1, style: const TextStyle(fontSize: 14)),
       ],
@@ -250,38 +245,55 @@ class _DrivingPageState extends State<DrivingPage> {
   Widget build(BuildContext context) {
     final socketManager = context.watch<SocketManager>();
     final authManager = context.read<AuthManager>();
-    final isDriving = socketManager.isDrivingByServer;
+
+    final bool wsConnected = socketManager.status == SocketConstants.connected;
+    final int? lastStatus = socketManager.lastStatus;           // 0/1/2/null
+    final bool uiDriving = (lastStatus == 1 || lastStatus == 2);
 
     final driving = socketManager.currentDriving;
     final distanceText = driving != null
         ? '${driving.mileage.toStringAsFixed(1)} km'
         : '0 km';
 
-    if (isDriving && driving != null && _startTime == null) {
+    if (uiDriving && driving != null && _startTime == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _restoreTimerFromServer(driving.startTime);
       });
     }
-    if (!isDriving && _startTime != null) {
+    if (!uiDriving && _startTime != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _drivingTimer?.cancel();
         _startTime = null;
-        setState(() {
-          _drivingData['time'] = '00:00:00';
-        });
+        setState(() => _drivingData['time'] = '00:00:00');
       });
     }
 
-    // Device.status==true
-    final bool hasReadyDevice =
-        socketManager.devices.any((d) => d.status == true);
+    final int? deviceIdCandidate = socketManager.currentDeviceId;
+    final bool hasDevice = deviceIdCandidate != null;
 
-    final bool startEnabled = isDriving || (hasReadyDevice && !_isAnalyzing);
+    final bool startEnabled = uiDriving
+        ? true
+        : (wsConnected && hasDevice && lastStatus == 0 && !_isAnalyzing);
+
+    String? disabledHint;
+    if (!uiDriving && !startEnabled) {
+      if (!wsConnected) {
+        disabledHint = 'WS 연결 중입니다...';
+      } else if (!hasDevice && socketManager.noStatusWindowElapsed) {
+        disabledHint = '디바이스가 연결되지 않았습니다';
+      } else {
+        disabledHint = '서버 상태 동기화 중입니다...';
+      }
+    }
 
     return ConfirmExitWrapper(
       child: AuthGuard(
         child: Scaffold(
           appBar: AppBar(
+            leading: Opacity(
+              opacity: 0,
+              child: IconButton(icon: const Icon(Icons.refresh), onPressed: () {}),
+            ),
             title: _wsStatusTitle(context),
             centerTitle: true,
             elevation: 0,
@@ -297,7 +309,6 @@ class _DrivingPageState extends State<DrivingPage> {
                   try { await sm.disconnect(); } catch (_) {}
                   try {
                     await sm.connect(am);
-                    await sm.refreshServerDriving(); // ★ 刷新设备与驾驶状态
                     if (!mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('WS 재연결 시도')),
@@ -369,18 +380,18 @@ class _DrivingPageState extends State<DrivingPage> {
                       const SizedBox(height: 50),
 
                       ActionButton(
-                        text: isDriving ? '운전종료' : '운전시작',
-                        icon: isDriving ? Icons.stop : Icons.play_arrow,
-                        color: isDriving ? Colors.red : const Color.fromARGB(255, 5, 68, 107),
-                        enabled: startEnabled, 
+                        text: uiDriving ? '운전종료' : '운전시작',
+                        icon: uiDriving ? Icons.stop : Icons.play_arrow,
+                        color: uiDriving ? Colors.red : const Color.fromARGB(255, 5, 68, 107),
+                        enabled: startEnabled,
                         onPressed: () {
                           if (_isAnalyzing) return;
-                          if (isDriving) {
+                          if (uiDriving) {
                             _endDriving(socketManager);
                           } else {
-                            if (!hasReadyDevice) {
+                            if (deviceIdCandidate == null) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('연결된 디바이스가 없습니다.')),
+                                const SnackBar(content: Text('디바이스가 없습니다.')),
                               );
                               return;
                             }
@@ -388,6 +399,11 @@ class _DrivingPageState extends State<DrivingPage> {
                           }
                         },
                       ),
+
+                      if (disabledHint != null) ...[
+                        const SizedBox(height: 12),
+                        Text(disabledHint, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                      ],
                     ],
                   ),
                 ),
