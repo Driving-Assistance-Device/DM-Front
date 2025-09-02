@@ -98,7 +98,7 @@ class _LoginPageState extends State<LoginPage> {
                 const SizedBox(height: 20),
                 TextButton(
                   onPressed: () => Navigator.pushNamed(context, AppRoutes.signup),
-                  child: const Text('계정없으신가요? 회원가입하세요'),
+                  child: const Text('회원가입'),
                 ),
               ],
             ),
